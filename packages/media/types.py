@@ -23,6 +23,7 @@ class MediaModel:
     # video limits (ignored for images)
     min_seconds: int = 0
     max_seconds: int = 0
+    default_seconds: int = 0      # what the provider uses when `seconds` is omitted (0: min_seconds)
     aspect_ratios: tuple[str, ...] = ()
     resolutions: tuple[str, ...] = ()
     max_reference_images: int = 0
@@ -34,6 +35,15 @@ class MediaModel:
     image_to_video: bool = False
     # price: video per generated second, image per image (microcents; 1 cent = 10_000, 1 USD = 1_000_000)
     cost_microcents_per_unit: int = 0
+    # False when we have no price for this model. Keys with a budget cap are refused for such
+    # models (fail closed) until MEDIA_PRICE_OVERRIDES supplies one; `auto` ranks them last.
+    price_known: bool = True
+
+    def seconds_for(self, requested: int | None) -> int:
+        """Seconds that will be generated (and billed) for a request."""
+        if requested is not None:
+            return requested
+        return self.default_seconds or self.min_seconds
 
     def to_dict(self) -> dict:
         return {
@@ -55,6 +65,7 @@ class MediaModel:
                 "image_to_video": self.image_to_video,
             },
             "cost_microcents_per_unit": self.cost_microcents_per_unit,
+            "price_known": self.price_known,
         }
 
 

@@ -63,6 +63,12 @@ class Settings(BaseSettings):
     media_poll_min_interval_s: float = 2.0
     # Largest accepted reference upload / result download, bytes.
     media_max_bytes: int = 512 * 1024 * 1024
+    # Use hosted OrcaRouter (ORCAROUTER_API_KEY) for image/video generation when a key is set.
+    media_hosted_enabled: bool = True
+    # JSON object {"model id": estimated microcents per unit}; unit = one video second or one image
+    # (1 cent = 10_000 microcents). Hosted models have no machine-readable price, so budget checks
+    # need these. Example: {"minimax/minimax-h3": 400000}
+    media_price_overrides: str = ""
 
     # ── Encryption ──
     # NOTE: credential_encryption_key is NOT auto-generated. If empty, the

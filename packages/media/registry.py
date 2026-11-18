@@ -26,8 +26,16 @@ def providers() -> dict[str, MediaProvider]:
         _providers = {}
         if get_settings().media_fake_provider:
             _providers["fake"] = FakeProvider()
-        # Real providers register here as they are added (see docs/CPX-MEDIA.md):
-        # Volcengine Ark, MiniMax, hosted OrcaRouter, fal, Replicate.
+        s = get_settings()
+        if s.orcarouter_api_key and s.media_hosted_enabled:
+            from packages.media.providers.orcarouter_hosted import OrcaHostedProvider
+
+            _providers["orcarouter"] = OrcaHostedProvider(
+                base_url=s.orcarouter_base_url, api_key=s.orcarouter_api_key,
+                price_overrides=s.media_price_overrides,
+            )
+        # More providers register here as they are added (see CPX-MEDIA.md):
+        # Volcengine Ark direct, MiniMax direct, fal, Replicate.
     return _providers
 
 
@@ -73,5 +81,6 @@ def resolve_auto_video(req: VideoRequest) -> tuple[MediaProvider, MediaModel]:
           if m.kind == "video" and can_serve(m, req)]
     if not ok:
         raise MediaError("No configured video model satisfies this request", 422, "no_capable_model")
-    ok.sort(key=lambda pm: pm[1].cost_microcents_per_unit)
+    # Priced models first, cheapest first; models without a known price come last.
+    ok.sort(key=lambda pm: (not pm[1].price_known, pm[1].cost_microcents_per_unit))
     return ok[0]

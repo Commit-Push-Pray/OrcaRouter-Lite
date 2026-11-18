@@ -51,18 +51,26 @@ def _check_allowlist(kc: KeyContext, requested: str) -> None:
 
 
 def estimate_video_microcents(model: MediaModel, req: VideoRequest) -> int:
-    seconds = req.seconds if req.seconds is not None else model.min_seconds
-    return model.cost_microcents_per_unit * max(seconds, 0)
+    return model.cost_microcents_per_unit * max(model.seconds_for(req.seconds), 0)
 
 
 def estimate_image_microcents(model: MediaModel, req: ImageRequest) -> int:
     return model.cost_microcents_per_unit * max(req.n, 1)
 
 
-async def _check_budget(db: AsyncSession, kc: KeyContext, estimate: int) -> None:
-    """Refuse before any paid call when the estimate does not fit the key's remaining budget."""
+async def _check_budget(db: AsyncSession, kc: KeyContext, estimate: int, model: MediaModel) -> None:
+    """Refuse before any paid call when the estimate does not fit the key's remaining budget.
+
+    A capped key is also refused for a model whose price is unknown: the cap could not be enforced.
+    """
     if kc.budget_limit_cents is None:
         return
+    if not model.price_known:
+        raise MediaError(
+            f"No price is known for '{model.id}', so this key's budget cannot be enforced. "
+            "Set MEDIA_PRICE_OVERRIDES or use a key without a budget.",
+            402, "price_unknown",
+        )
     cap = kc.budget_limit_cents * MICROCENTS_PER_CENT
     spent = await read_spent(db, kc.key_id)
     if spent + estimate > cap:
@@ -93,6 +101,14 @@ async def _budget_cents_of(db: AsyncSession, api_key_id: str) -> int | None:
     return (await db.execute(select(ApiKey.budget_limit_cents).where(ApiKey.id == api_key_id))).scalar_one_or_none()
 
 
+async def _fetch(url: str) -> bytes:
+    """Download a provider's result URL. Separate so tests can replace it."""
+    async with httpx.AsyncClient(timeout=120, follow_redirects=True) as c:
+        r = await c.get(url)
+        r.raise_for_status()
+        return r.content
+
+
 async def _materialize(job: MediaJob, outputs: list[MediaOutput]) -> None:
     """Copy provider outputs into the local store (URLs expire)."""
     names, types = [], []
@@ -102,16 +118,14 @@ async def _materialize(job: MediaJob, outputs: list[MediaOutput]) -> None:
         if data is None and out.url:
             if not out.url.startswith(("https://", "http://")):
                 raise MediaError("Provider returned a non-http result URL", 502, "upstream_error")
-            async with httpx.AsyncClient(timeout=120, follow_redirects=True) as c:
-                r = await c.get(out.url)
-                r.raise_for_status()
-                data = r.content
+            data = await _fetch(out.url)
         if data is None:
             raise MediaError("Provider returned an empty result", 502, "upstream_error")
         if len(data) > limit:
             raise MediaError("Result larger than MEDIA_MAX_BYTES", 502, "upstream_error")
-        names.append(store.save(job.id, i, out.content_type, data))
-        types.append(out.content_type)
+        ctype = store.sniff(data, out.content_type)
+        names.append(store.save(job.id, i, ctype, data))
+        types.append(ctype)
     job.outputs, job.content_types = names, types
 
 
@@ -128,14 +142,14 @@ async def create_images(db: AsyncSession, kc: KeyContext, req: ImageRequest) -> 
         models = registry.all_models("image")
         if not models:
             raise MediaError("No image model is configured", 422, "no_capable_model")
-        model = min(models, key=lambda m: m.cost_microcents_per_unit)
+        model = min(models, key=lambda m: (not m.price_known, m.cost_microcents_per_unit))
         provider = registry.providers()[model.provider]
     else:
         provider, model = registry.resolve(req.model, "image")
     if not 1 <= req.n <= 10:
         raise MediaError("n must be between 1 and 10", 422, "validation_error")
     estimate = estimate_image_microcents(model, req)
-    await _check_budget(db, kc, estimate)
+    await _check_budget(db, kc, estimate, model)
 
     started = time.monotonic()
     job = MediaJob(
@@ -174,7 +188,7 @@ async def create_video(db: AsyncSession, kc: KeyContext, req: VideoRequest) -> M
         if not registry.can_serve(model, req):
             raise MediaError(_why_not(model, req), 422, "unsupported_parameters")
     estimate = estimate_video_microcents(model, req)
-    await _check_budget(db, kc, estimate)
+    await _check_budget(db, kc, estimate, model)
 
     try:
         provider_job_id = await provider.submit_video(model, req)

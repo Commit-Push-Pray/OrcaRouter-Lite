@@ -22,6 +22,24 @@ def ext_for(content_type: str) -> str:
     return _EXT.get(content_type.split(";")[0].strip().lower(), ".bin")
 
 
+def sniff(data: bytes, default: str) -> str:
+    """Content type from the file's own magic bytes; `default` when unrecognised.
+
+    Providers return URLs without a reliable type, so the stored extension comes from the bytes.
+    """
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    if data[4:8] == b"ftyp":
+        return "video/mp4"
+    if data.startswith(b"\x1a\x45\xdf\xa3"):
+        return "video/webm"
+    return default
+
+
 def save(job_id: str, index: int, content_type: str, data: bytes) -> str:
     """Write one asset and return its file name (relative to the store root)."""
     if not _SAFE.match(job_id):

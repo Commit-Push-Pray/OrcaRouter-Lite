@@ -36,16 +36,40 @@ Added in Commit-Push-Pray's fork. Everything lives in new modules so merging ups
 | `MEDIA_FAKE_PROVIDER` | `false` | Registers `fake/image-1` and `fake/video-1` (no network, no cost) for tests and client wiring |
 | `MEDIA_POLL_MIN_INTERVAL_S` | `2` | Minimum gap between upstream polls of one job |
 | `MEDIA_MAX_BYTES` | 512 MB | Largest result accepted from a provider |
+| `MEDIA_HOSTED_ENABLED` | `true` | Use hosted OrcaRouter for media when `ORCAROUTER_API_KEY` is set |
+| `MEDIA_PRICE_OVERRIDES` | empty | JSON `{model id: microcents per unit}` for models without a known price |
+
+## Hosted OrcaRouter provider
+
+Enabled when `ORCAROUTER_API_KEY` is set (and `MEDIA_HOSTED_ENABLED` is not `false`); base URL
+`ORCAROUTER_BASE_URL`. **Built from the public docs and tested only against a mock transport, not the live API.**
+
+- Video models: `kling/kling-v3-omni`, `kling/kling-v3`, `kling/kling-video-o1`,
+  `byteplus/dreamina-seedance-2-0-260128`, `minimax/minimax-h3`. Each family gets its own request body
+  (`packages/media/providers/orcarouter_hosted.py`); statuses `NOT_START/SUBMITTED` -> `queued`,
+  `IN_PROGRESS` -> `running`, `SUCCESS` -> `succeeded`, `FAILURE` -> `failed`; the signed `result_url` is
+  downloaded into the media store at once.
+- Image models: `openai/gpt-image-1`, `-mini`, `-1.5`; Imagen 4 (fast, standard, ultra); Grok Imagine (+pro).
+  Text-to-image only; reference images (needs `/images/edits`) are refused for now.
+- Kling reference media (`image_list` / `video_list`) is refused until their exact field values are verified;
+  first and last frame work.
+- **Prices are unknown** (the hosted API publishes none). Models are flagged `price_known: false`:
+  a key **with a budget cap is refused (402) for them**, `auto` ranks them last, and uncapped keys work normally.
+  Supply estimates with `MEDIA_PRICE_OVERRIDES='{"minimax/minimax-h3": 400000}'` (microcents per video second or per
+  image) to make them priced. The charged cost is that estimate, not the provider's settled cost.
+- The key comes from the environment only; a key stored through the dashboard is not read by this provider yet.
+
+Needs a live check: image response shape, whether Seedance accepts plain https reference URLs without its asset
+library, what `POST /v1/videos` does on the hosted side, and the real cost of a task.
 
 ## Adding a provider
 
 Subclass `packages.media.provider.MediaProvider` (`models`, `generate_images`, `submit_video`, `poll_video`,
 optional `cancel_video`) and register it in `packages/media/registry.py`. Real providers are planned in this
-order: hosted OrcaRouter (shape to be confirmed against `api.orcarouter.ai`), Volcengine Ark (Seedance, Seedream),
-MiniMax, then fal and Replicate.
+order: hosted OrcaRouter (done, see above), Volcengine Ark (Seedance, Seedream), MiniMax, then fal and Replicate.
 
 ## Not yet done
 
-Real providers; speech (`/v1/audio/speech`); dashboard tab for media jobs; uploading reference files (today
+Live verification of the hosted provider; other providers (Volcengine Ark direct, MiniMax direct, fal, Replicate); speech (`/v1/audio/speech`); dashboard tab for media jobs; uploading reference files (today
 references are URLs or `data:` strings the provider accepts); durable job recovery after a restart is handled by
 the sweeper picking up `queued`/`running` rows, but provider-side state for the fake provider is in memory only.
