@@ -52,6 +52,18 @@ class Settings(BaseSettings):
     port: int = 8000
     log_level: str = "info"
 
+    # ── Media generation (CPX fork) ───────────────────
+    # Where finished images/videos are kept. Providers hand back short-lived
+    # URLs (Seedance: 24 h), so results are copied here when a job finishes.
+    media_dir: str = "./data/media"
+    # Registers the deterministic fake provider (models fake/image-1, fake/video-1).
+    # For tests and for wiring up clients without spending anything.
+    media_fake_provider: bool = False
+    # Lowest gap between upstream polls of one job, seconds.
+    media_poll_min_interval_s: float = 2.0
+    # Largest accepted reference upload / result download, bytes.
+    media_max_bytes: int = 512 * 1024 * 1024
+
     # ── Encryption ──
     # NOTE: credential_encryption_key is NOT auto-generated. If empty, the
     # app seals provider keys with a publicly-known dev key (with a loud

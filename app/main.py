@@ -128,10 +128,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     await cache_invalidation_bus.start_invalidation_listener()
 
+    # CPX: poll unfinished video jobs so results are saved even when no client asks.
+    import asyncio
+
+    from packages.media import service as media_service
+
+    media_sweeper = asyncio.create_task(
+        media_service.sweep_forever(session_factory, settings.media_poll_min_interval_s * 2)
+    )
+
     log.info("lite_ready")
     yield
 
     log.info("lite_shutting_down")
+    media_sweeper.cancel()
     await cache_invalidation_bus.stop_invalidation_listener()
     await dispose_engine()
 
@@ -230,6 +240,7 @@ def create_app() -> FastAPI:
         health,
         hosted,
         keys,
+        media,
         models,
         providers,
         quality,
@@ -243,6 +254,7 @@ def create_app() -> FastAPI:
     app.include_router(gemini_compat.router)
     app.include_router(analytics.router)
     app.include_router(models.router)
+    app.include_router(media.router)
     app.include_router(keys.router)
     app.include_router(routing.router)
     app.include_router(hosted.router)
