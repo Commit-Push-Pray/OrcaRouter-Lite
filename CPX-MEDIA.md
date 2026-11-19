@@ -42,25 +42,58 @@ Added in Commit-Push-Pray's fork. Everything lives in new modules so merging ups
 ## Hosted OrcaRouter provider
 
 Enabled when `ORCAROUTER_API_KEY` is set (and `MEDIA_HOSTED_ENABLED` is not `false`); base URL
-`ORCAROUTER_BASE_URL`. **Built from the public docs and tested only against a mock transport, not the live API.**
+`ORCAROUTER_BASE_URL`. **Verified against the live API (2026-11-18/19).**
 
-- Video models: `kling/kling-v3-omni`, `kling/kling-v3`, `kling/kling-video-o1`,
-  `byteplus/dreamina-seedance-2-0-260128`, `minimax/minimax-h3`. Each family gets its own request body
-  (`packages/media/providers/orcarouter_hosted.py`); statuses `NOT_START/SUBMITTED` -> `queued`,
-  `IN_PROGRESS` -> `running`, `SUCCESS` -> `succeeded`, `FAILURE` -> `failed`; the signed `result_url` is
-  downloaded into the media store at once.
-- Image models: `openai/gpt-image-1`, `-mini`, `-1.5`; Imagen 4 (fast, standard, ultra); Grok Imagine (+pro).
-  Text-to-image only; reference images (needs `/images/edits`) are refused for now.
+### Video models (9)
+
+| Model | Price | Unit | Seconds | Resolutions | Audio |
+| :--- | ---: | :--- | :--- | :--- | :---: |
+| `kling/kling-v2-5-turbo` | $0.042 | request | 5-10 | 720p, 1080p | — |
+| `kling/kling-v2-6` | $0.042 | request | 5-10 | 720p, 1080p | — |
+| `kling/kling-v3-omni` | $0.084 | request | 3-15 | 720p, 1080p, 4k | yes |
+| `kling/kling-v3` | $0.084 | request | 3-15 | 720p, 1080p, 4k | yes |
+| `kling/kling-video-o1` | $0.084 | request | 5 or 10 | 720p, 1080p | — |
+| `kling/kling-3-turbo` | $0.112 | request | 3-15 | 720p, 1080p | yes |
+| `kling/kling-v2-master` | $0.280 | request | 5-10 | 720p, 1080p, 4k | — |
+| `kling/kling-v2-1-master` | $0.280 | request | 5-10 | 720p, 1080p, 4k | — |
+| `minimax/minimax-h3` | $0.080/s | second | 4-15 | 768p, 2k | — |
+
+**Pricing units:** Kling is flat per request regardless of duration (`pricing_unit="request"`); MiniMax is
+per generated second (`pricing_unit="second"`). The `MediaModel.estimate_microcents(seconds)` method handles
+both. `model="auto"` compares effective total cost across units.
+
+Each family gets its own request body builder (`packages/media/providers/orcarouter_hosted.py`);
+statuses `NOT_START/SUBMITTED` -> `queued`, `IN_PROGRESS` -> `running`, `SUCCESS` -> `succeeded`,
+`FAILURE` -> `failed`; the signed `result_url` is downloaded into the media store at once.
+
+Seedance (`byteplus/dreamina-*`) was removed: it is not in the live /v1/models list (returns 404).
+
+### Image models (8)
+
+| Model | Price | Notes |
+| :--- | ---: | :--- |
+| `google/imagen-4.0-fast-generate-001` | $0.020/image | |
+| `google/imagen-4.0-generate-001` | $0.040/image | |
+| `google/imagen-4.0-ultra-generate-001` | $0.060/image | |
+| `openai/gpt-image-1` | unknown | token-based |
+| `openai/gpt-image-1-mini` | unknown | token-based |
+| `openai/gpt-image-1.5` | unknown | token-based |
+| `grok/grok-imagine-image` | unknown | |
+| `grok/grok-imagine-image-pro` | unknown | |
+
+Text-to-image only; reference images (needs `/images/edits`) are refused for now.
+All image endpoints returned 503 upstream as of 2026-11-19.
+
+### Pricing and budgets
+
+- All video models have **builtin prices** (`price_known: true`). Budget-capped keys work for all of them.
+- Google Imagen models have builtin prices. OpenAI/Grok image models are **unpriced** (token-based pricing
+  not convertible to per-image cost); a capped key is refused (402) for them.
+- `MEDIA_PRICE_OVERRIDES` still works to override any builtin price or supply one for unpriced models:
+  `MEDIA_PRICE_OVERRIDES='{"openai/gpt-image-1": 50000}'` (microcents per image).
 - Kling reference media (`image_list` / `video_list`) is refused until their exact field values are verified;
   first and last frame work.
-- **Prices are unknown** (the hosted API publishes none). Models are flagged `price_known: false`:
-  a key **with a budget cap is refused (402) for them**, `auto` ranks them last, and uncapped keys work normally.
-  Supply estimates with `MEDIA_PRICE_OVERRIDES='{"minimax/minimax-h3": 400000}'` (microcents per video second or per
-  image) to make them priced. The charged cost is that estimate, not the provider's settled cost.
 - The key comes from the environment only; a key stored through the dashboard is not read by this provider yet.
-
-Needs a live check: image response shape, whether Seedance accepts plain https reference URLs without its asset
-library, what `POST /v1/videos` does on the hosted side, and the real cost of a task.
 
 ## Adding a provider
 
@@ -70,6 +103,7 @@ order: hosted OrcaRouter (done, see above), Volcengine Ark (Seedance, Seedream),
 
 ## Not yet done
 
-Live verification of the hosted provider; other providers (Volcengine Ark direct, MiniMax direct, fal, Replicate); speech (`/v1/audio/speech`); dashboard tab for media jobs; uploading reference files (today
+End-to-end live API test (submit + poll + download); other providers (Volcengine Ark direct, MiniMax direct,
+fal, Replicate); speech (`/v1/audio/speech`); dashboard tab for media jobs; uploading reference files (today
 references are URLs or `data:` strings the provider accepts); durable job recovery after a restart is handled by
 the sweeper picking up `queued`/`running` rows, but provider-side state for the fake provider is in memory only.

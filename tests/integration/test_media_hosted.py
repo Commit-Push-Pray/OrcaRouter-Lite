@@ -87,10 +87,12 @@ async def test_models_listed_with_price_flags(hosted):
     client, _, _ = hosted
     data = (await client.get("/v1/media/models?kind=video")).json()["data"]
     by = {m["id"]: m for m in data}
-    assert set(by) == {"kling/kling-v3-omni", "kling/kling-v3", "kling/kling-video-o1",
-                       "byteplus/dreamina-seedance-2-0-260128", "minimax/minimax-h3"}
+    assert "kling/kling-v3-omni" in by and "minimax/minimax-h3" in by
+    assert "kling/kling-v2-5-turbo" in by  # newly added model
+    assert "byteplus/dreamina-seedance-2-0-260128" not in by  # removed: not in live API
+    assert len(by) == 9  # 8 Kling + 1 MiniMax
     assert by["minimax/minimax-h3"]["price_known"] is True
-    assert by["kling/kling-v3"]["price_known"] is False
+    assert by["kling/kling-v3"]["price_known"] is True  # now has builtin price
     # the upstream key never appears in a listing
     assert "sk-orca-upstream" not in json.dumps(data)
 
@@ -114,31 +116,42 @@ async def test_video_round_trip_through_hosted(hosted):
     assert content.status_code == 200 and content.content == MP4
 
 
-async def test_capped_key_refused_for_unpriced_model(hosted):
+async def test_capped_key_refused_for_unpriced_image_model(hosted):
     client, factory, calls = hosted
     from packages.db.models.api_key import ApiKey
 
     async with factory() as s:
         await s.execute(update(ApiKey).values(budget_limit_cents=100_000))
         await s.commit()
-    r = await client.post("/v1/videos", json={"model": "kling/kling-v3", "prompt": "p"})
+    r = await client.post("/v1/images/generations",
+                          json={"model": "openai/gpt-image-1", "prompt": "p"})
     assert r.status_code == 402 and "MEDIA_PRICE_OVERRIDES" in r.json()["error"]["message"]
     assert not calls                                   # nothing was sent upstream
-    ok = await client.post("/v1/videos", json={"model": "minimax/minimax-h3", "prompt": "p"})
-    assert ok.status_code == 202                       # priced model still works
 
 
-async def test_uncapped_key_may_use_unpriced_model(hosted):
+async def test_capped_key_allows_priced_video_model(hosted):
+    client, factory, calls = hosted
+    from packages.db.models.api_key import ApiKey
+
+    async with factory() as s:
+        await s.execute(update(ApiKey).values(budget_limit_cents=100_000))
+        await s.commit()
+    r = await client.post("/v1/videos", json={"model": "kling/kling-v3", "prompt": "p", "seconds": 5})
+    assert r.status_code == 202                        # all video models have builtin prices now
+
+
+async def test_kling_sends_duration_as_string(hosted):
     client, _, calls = hosted
     r = await client.post("/v1/videos", json={"model": "kling/kling-v3", "prompt": "p", "seconds": 5})
     assert r.status_code == 202
     assert calls[0][2]["metadata"]["duration"] == "5"
 
 
-async def test_auto_prefers_priced_model(hosted):
+async def test_auto_prefers_cheapest_video_model(hosted):
     client, _, _ = hosted
     r = await client.post("/v1/videos", json={"prompt": "p", "seconds": 6})
-    assert r.status_code == 202 and r.json()["model"] == "minimax/minimax-h3"
+    assert r.status_code == 202
+    assert r.json()["model"] == "kling/kling-v2-5-turbo"  # $0.042 flat < MiniMax $0.08*6s
 
 
 async def test_upstream_rejection_is_reported_as_422_and_creates_no_job(hosted, monkeypatch):

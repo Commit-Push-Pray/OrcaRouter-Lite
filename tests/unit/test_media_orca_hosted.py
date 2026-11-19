@@ -17,7 +17,7 @@ def model(mid: str):
 
 
 KLING = "kling/kling-v3-omni"
-SEED = "byteplus/dreamina-seedance-2-0-260128"
+KLING_TURBO = "kling/kling-v2-5-turbo"
 MINI = "minimax/minimax-h3"
 
 
@@ -52,27 +52,20 @@ def test_kling_refuses_reference_media_for_now():
         h.build_video_body(model(KLING), VideoRequest(model=KLING, prompt="p", reference_images=["u"]))
 
 
-def test_seedance_content_roles_and_metadata():
-    req = VideoRequest(model=SEED, prompt="p", seconds=6, aspect_ratio="16:9", resolution="720p", seed=7,
-                       audio=True, first_frame="f", last_frame="l", reference_images=["i1", "i2"],
-                       reference_videos=["v1"], reference_audios=["a1"])
-    body = h.build_video_body(model(SEED), req)
-    meta = body["metadata"]
-    assert body["model"] == SEED and body["prompt"] == "p"
-    assert [(c["type"], c["role"]) for c in meta["content"]] == [
-        ("image_url", "first_frame"), ("image_url", "end_frame"),
-        ("image_url", "reference_image"), ("image_url", "reference_image"),
-        ("video_url", "reference_video"), ("audio_url", "reference_audio"),
-    ]
-    assert meta["content"][0]["image_url"] == {"url": "f"}
-    assert meta["content"][4]["video_url"] == {"url": "v1"}
-    assert (meta["ratio"], meta["duration"], meta["resolution"], meta["generate_audio"], meta["seed"]) == \
-        ("16:9", 6, "720p", True, 7)
+def test_kling_v2_turbo_builds_correctly():
+    body = h.build_video_body(model(KLING_TURBO), VideoRequest(model=KLING_TURBO, prompt="p", seconds=5))
+    assert body["model"] == KLING_TURBO
+    assert body["metadata"]["duration"] == "5"
+    assert "mode" not in body["metadata"]  # no resolution requested, no mode set
+    body_720 = h.build_video_body(model(KLING_TURBO),
+                                  VideoRequest(model=KLING_TURBO, prompt="p", seconds=5, resolution="720p"))
+    assert body_720["metadata"]["mode"] == "std"
 
 
-def test_seedance_text_only_has_no_content_and_default_duration():
-    meta = h.build_video_body(model(SEED), VideoRequest(model=SEED, prompt="p"))["metadata"]
-    assert "content" not in meta and meta["duration"] == 4
+def test_kling_v2_turbo_refuses_seconds_outside_range():
+    m = model(KLING_TURBO)
+    body = h.build_video_body(m, VideoRequest(model=KLING_TURBO, prompt="p", seconds=10))
+    assert body["metadata"]["duration"] == "10"
 
 
 def test_minimax_body_single_vs_many_images_and_size():
@@ -89,15 +82,19 @@ def test_minimax_body_single_vs_many_images_and_size():
                                 "video_urls": ["v"], "audio_urls": ["a"]}
 
 
-@pytest.mark.parametrize("mid", [SEED, MINI])
-def test_reference_audio_alone_is_refused(mid):
+def test_reference_audio_alone_is_refused():
     with pytest.raises(MediaError, match="Reference audio"):
-        h.build_video_body(model(mid), VideoRequest(model=mid, prompt="p", reference_audios=["a"]))
+        h.build_video_body(model(MINI), VideoRequest(model=MINI, prompt="p", reference_audios=["a"]))
 
 
 def test_unknown_family_rejected():
     with pytest.raises(MediaError):
         h.family("openai/gpt-image-1")
+
+
+def test_byteplus_family_no_longer_recognised():
+    with pytest.raises(MediaError):
+        h.family("byteplus/seedance")
 
 
 # ── response parsing ──────────────────────────────────────────────────
@@ -157,18 +154,49 @@ def test_parse_images_b64_and_url():
 # ── catalog and prices ────────────────────────────────────────────────
 
 
-def test_prices_are_unknown_until_overridden():
+def test_builtin_prices_are_known_for_all_video_models():
     p = h.OrcaHostedProvider("https://x/v1", "sk-orca-test")
-    assert all(not m.price_known for m in p.models())
-    p2 = h.OrcaHostedProvider("https://x/v1", "sk-orca-test", price_overrides='{"minimax/minimax-h3": 400000}')
-    by = {m.id: m for m in p2.models()}
+    video = [m for m in p.models() if m.kind == "video"]
+    assert all(m.price_known for m in video)
+    by = {m.id: m for m in video}
+    assert by[MINI].cost_microcents_per_unit == 80_000 and by[MINI].pricing_unit == "second"
+    assert by[KLING].cost_microcents_per_unit == 84_000 and by[KLING].pricing_unit == "request"
+    assert by[KLING_TURBO].cost_microcents_per_unit == 42_000 and by[KLING_TURBO].pricing_unit == "request"
+
+
+def test_image_prices_known_for_google_unknown_for_openai():
+    p = h.OrcaHostedProvider("https://x/v1", "sk-orca-test")
+    by = {m.id: m for m in p.models() if m.kind == "image"}
+    assert by["google/imagen-4.0-fast-generate-001"].price_known
+    assert by["google/imagen-4.0-fast-generate-001"].cost_microcents_per_unit == 20_000
+    assert not by["openai/gpt-image-1"].price_known
+
+
+def test_price_overrides_replace_builtin():
+    p = h.OrcaHostedProvider("https://x/v1", "sk-orca-test", price_overrides='{"minimax/minimax-h3": 400000}')
+    by = {m.id: m for m in p.models()}
     assert by[MINI].price_known and by[MINI].cost_microcents_per_unit == 400_000
-    assert not by[KLING].price_known
 
 
 def test_bad_price_overrides_fail_loudly():
     with pytest.raises(ValueError, match="MEDIA_PRICE_OVERRIDES"):
         h.OrcaHostedProvider("https://x/v1", "k", price_overrides="not json")
+
+
+def test_pricing_unit_in_estimate():
+    kling = model(KLING_TURBO)
+    assert kling.estimate_microcents(5) == 42_000  # flat per request
+    assert kling.estimate_microcents(10) == 42_000  # same regardless of seconds
+    mini = model(MINI)
+    assert mini.estimate_microcents(5) == 400_000  # 80k * 5 seconds
+    assert mini.estimate_microcents(10) == 800_000  # 80k * 10 seconds
+
+
+def test_model_count():
+    video = [m for m in h.MODELS if m.kind == "video"]
+    image = [m for m in h.MODELS if m.kind == "image"]
+    assert len(video) == 9   # 8 Kling + 1 MiniMax
+    assert len(image) == 8   # 3 Google + 3 OpenAI + 2 Grok
 
 
 # ── HTTP behaviour via mock transport ─────────────────────────────────

@@ -1,12 +1,12 @@
 """Hosted OrcaRouter (api.orcarouter.ai) as an image/video provider.
 
-Built from the public docs (https://docs.orcarouter.ai); see CPX-GenAI/docs/orca-capabilities.md.
-Not yet exercised against the live API. Items marked VERIFY below are assumptions to check with a
-real call.
+Verified against the live API (2026-11-18/19); see CPX-GenAI/docs/orca-capabilities.md.
 
 Video goes through POST /v1/video/generations, whose body depends on the model family:
-`kling/...`, `byteplus/...` (Seedance), `minimax/...`. This module turns our neutral `VideoRequest`
-into each family's body, and turns the wrapped poll envelope back into a `ProviderStatus`.
+`kling/...` and `minimax/...`. This module turns our neutral `VideoRequest` into each family's body,
+and turns the wrapped poll envelope back into a `ProviderStatus`.
+
+Seedance (byteplus/dreamina-*) was removed: it is not in the live /v1/models list (returns 404).
 """
 
 from __future__ import annotations
@@ -31,49 +31,70 @@ from packages.media.types import (
 
 NAME = "orcarouter"
 
-# ── model catalog (limits from the docs; prices unknown, see MEDIA_PRICE_OVERRIDES) ──
+# ── model catalog (prices from live /v1/models, 2026-11-19) ──────────
 
 _RATIOS_KLING = ("16:9", "9:16", "1:1")
 _RATIOS_WIDE = ("16:9", "9:16", "1:1", "4:3", "3:4", "21:9")
 
+# 1 USD = 1,000,000 microcents.  Kling is per-request; MiniMax is per-second.
+_KLING_COMMON = dict(aspect_ratios=_RATIOS_KLING, first_last_frame=True, image_to_video=True)
 
-def _video(id_: str, name: str, **kw: Any) -> MediaModel:
-    return MediaModel(id=id_, provider=NAME, kind="video", name=name, price_known=False, **kw)
+
+def _video(id_: str, name: str, cost: int = 0, unit: str = "second", **kw: Any) -> MediaModel:
+    return MediaModel(id=id_, provider=NAME, kind="video", name=name,
+                      cost_microcents_per_unit=cost, pricing_unit=unit,
+                      price_known=cost > 0, **kw)
 
 
-def _image(id_: str, name: str) -> MediaModel:
-    return MediaModel(id=id_, provider=NAME, kind="image", name=name, price_known=False)
+def _image(id_: str, name: str, cost: int = 0) -> MediaModel:
+    return MediaModel(id=id_, provider=NAME, kind="image", name=name,
+                      cost_microcents_per_unit=cost, price_known=cost > 0)
 
 
 MODELS: tuple[MediaModel, ...] = (
-    # Kling. References beyond first/last frame (image_list, video_list) are left out until the
-    # exact `type` / `refer_type` values are verified.
-    _video("kling/kling-v3-omni", "Kling v3 Omni", min_seconds=3, max_seconds=15, default_seconds=5,
-           aspect_ratios=_RATIOS_KLING, resolutions=("720p", "1080p", "4k"),
-           first_last_frame=True, native_audio=True, image_to_video=True),
-    _video("kling/kling-v3", "Kling v3", min_seconds=3, max_seconds=15, default_seconds=5,
-           aspect_ratios=_RATIOS_KLING, resolutions=("720p", "1080p", "4k"),
-           first_last_frame=True, native_audio=True, image_to_video=True),
-    _video("kling/kling-video-o1", "Kling Video O1", min_seconds=5, max_seconds=10, default_seconds=5,
-           aspect_ratios=_RATIOS_KLING, resolutions=("720p", "1080p"),
-           first_last_frame=True, image_to_video=True),
-    # Seedance 2.0
-    _video("byteplus/dreamina-seedance-2-0-260128", "Seedance 2.0", min_seconds=4, max_seconds=15,
-           aspect_ratios=(*_RATIOS_WIDE, "adaptive"), resolutions=("480p", "720p", "1080p"),
-           max_reference_images=9, max_reference_videos=3, max_reference_audios=3,
-           first_last_frame=True, native_audio=True, image_to_video=True),
-    # MiniMax H3
-    _video("minimax/minimax-h3", "MiniMax H3", min_seconds=4, max_seconds=15, default_seconds=6,
+    # ── Kling (per-request pricing) ──
+    # v2 era (5-10s, 720p/1080p, no native audio)
+    _video("kling/kling-v2-5-turbo", "Kling v2.5 Turbo", cost=42_000, unit="request",
+           min_seconds=5, max_seconds=10, default_seconds=5,
+           resolutions=("720p", "1080p"), **_KLING_COMMON),
+    _video("kling/kling-v2-6", "Kling v2.6", cost=42_000, unit="request",
+           min_seconds=5, max_seconds=10, default_seconds=5,
+           resolutions=("720p", "1080p"), **_KLING_COMMON),
+    # v3 era (3-15s, up to 4k, native audio)
+    _video("kling/kling-v3-omni", "Kling v3 Omni", cost=84_000, unit="request",
+           min_seconds=3, max_seconds=15, default_seconds=5,
+           resolutions=("720p", "1080p", "4k"), native_audio=True, **_KLING_COMMON),
+    _video("kling/kling-v3", "Kling v3", cost=84_000, unit="request",
+           min_seconds=3, max_seconds=15, default_seconds=5,
+           resolutions=("720p", "1080p", "4k"), native_audio=True, **_KLING_COMMON),
+    _video("kling/kling-video-o1", "Kling Video O1", cost=84_000, unit="request",
+           min_seconds=5, max_seconds=10, default_seconds=5,
+           resolutions=("720p", "1080p"), **_KLING_COMMON),
+    _video("kling/kling-3-turbo", "Kling 3 Turbo", cost=112_000, unit="request",
+           min_seconds=3, max_seconds=15, default_seconds=5,
+           resolutions=("720p", "1080p"), native_audio=True, **_KLING_COMMON),
+    # master tier
+    _video("kling/kling-v2-master", "Kling v2 Master", cost=280_000, unit="request",
+           min_seconds=5, max_seconds=10, default_seconds=5,
+           resolutions=("720p", "1080p", "4k"), **_KLING_COMMON),
+    _video("kling/kling-v2-1-master", "Kling v2.1 Master", cost=280_000, unit="request",
+           min_seconds=5, max_seconds=10, default_seconds=5,
+           resolutions=("720p", "1080p", "4k"), **_KLING_COMMON),
+    # ── MiniMax (per-second pricing: $0.08/s) ──
+    _video("minimax/minimax-h3", "MiniMax H3", cost=80_000, unit="second",
+           min_seconds=4, max_seconds=15, default_seconds=6,
            aspect_ratios=_RATIOS_WIDE, resolutions=("768p", "2k"),
            max_reference_images=9, max_reference_videos=3, max_reference_audios=3,
            first_last_frame=True, image_to_video=True),
-    # Images (text to image). Reference images need /images/edits (multipart): not wired yet.
+    # ── Images (text to image; all 503 upstream as of 2026-11-19) ──
+    # Google Imagen: per-request pricing, known from /v1/models
+    _image("google/imagen-4.0-fast-generate-001", "Imagen 4 Fast", cost=20_000),
+    _image("google/imagen-4.0-generate-001", "Imagen 4", cost=40_000),
+    _image("google/imagen-4.0-ultra-generate-001", "Imagen 4 Ultra", cost=60_000),
+    # OpenAI / Grok: token-based pricing, not convertible to per-image cost
     _image("openai/gpt-image-1", "GPT Image 1"),
     _image("openai/gpt-image-1-mini", "GPT Image 1 mini"),
     _image("openai/gpt-image-1.5", "GPT Image 1.5"),
-    _image("google/imagen-4.0-fast-generate-001", "Imagen 4 Fast"),
-    _image("google/imagen-4.0-generate-001", "Imagen 4"),
-    _image("google/imagen-4.0-ultra-generate-001", "Imagen 4 Ultra"),
     _image("grok/grok-imagine-image", "Grok Imagine"),
     _image("grok/grok-imagine-image-pro", "Grok Imagine Pro"),
 )
@@ -88,7 +109,7 @@ _STATUS = {
 
 def family(model_id: str) -> str:
     head = model_id.split("/", 1)[0]
-    if head in ("kling", "byteplus", "minimax"):
+    if head in ("kling", "minimax"):
         return head
     raise MediaError(f"'{model_id}' is not a video model of this provider", 400)
 
@@ -102,7 +123,7 @@ def _unsupported(model_id: str, what: str) -> MediaError:
 
 def build_video_body(model: MediaModel, req: VideoRequest) -> dict:
     fam = family(model.id)
-    body = {"kling": _kling, "byteplus": _seedance, "minimax": _minimax}[fam](model, req)
+    body = {"kling": _kling, "minimax": _minimax}[fam](model, req)
     body["model"] = model.id
     body["prompt"] = req.prompt
     return body
@@ -132,40 +153,6 @@ def _kling(model: MediaModel, req: VideoRequest) -> dict:
     if req.audio:
         meta["sound"] = "on"
     return body
-
-
-def _seedance(model: MediaModel, req: VideoRequest) -> dict:
-    content: list[dict] = []
-
-    def add(kind: str, url: str, role: str) -> None:
-        content.append({"type": f"{kind}_url", f"{kind}_url": {"url": url}, "role": role})
-
-    if req.first_frame:
-        add("image", req.first_frame, "first_frame")
-    if req.last_frame:
-        add("image", req.last_frame, "end_frame")
-    for u in req.reference_images:
-        add("image", u, "reference_image")
-    for u in req.reference_videos:
-        add("video", u, "reference_video")
-    for u in req.reference_audios:
-        add("audio", u, "reference_audio")
-    if req.reference_audios and not (req.reference_images or req.reference_videos):
-        raise MediaError("Reference audio needs at least one reference image or video", 422,
-                         "unsupported_parameters")
-    meta: dict[str, Any] = {}
-    if content:
-        meta["content"] = content                         # the top-level prompt replaces any text item
-    if req.aspect_ratio:
-        meta["ratio"] = req.aspect_ratio
-    if req.resolution:
-        meta["resolution"] = req.resolution.lower()
-    meta["duration"] = model.seconds_for(req.seconds)
-    if req.audio:
-        meta["generate_audio"] = True
-    if req.seed is not None:
-        meta["seed"] = req.seed
-    return {"metadata": meta}
 
 
 def _minimax(model: MediaModel, req: VideoRequest) -> dict:

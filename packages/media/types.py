@@ -33,8 +33,11 @@ class MediaModel:
     native_audio: bool = False
     text_to_video: bool = True
     image_to_video: bool = False
-    # price: video per generated second, image per image (microcents; 1 cent = 10_000, 1 USD = 1_000_000)
+    # price (microcents; 1 cent = 10_000, 1 USD = 1_000_000)
+    # For video: per generated second when pricing_unit="second", flat per request when "request".
+    # For images: per image.
     cost_microcents_per_unit: int = 0
+    pricing_unit: str = "second"   # "second" (MiniMax) or "request" (Kling)
     # False when we have no price for this model. Keys with a budget cap are refused for such
     # models (fail closed) until MEDIA_PRICE_OVERRIDES supplies one; `auto` ranks them last.
     price_known: bool = True
@@ -44,6 +47,12 @@ class MediaModel:
         if requested is not None:
             return requested
         return self.default_seconds or self.min_seconds
+
+    def estimate_microcents(self, seconds: int) -> int:
+        """Estimated cost for a video of *seconds* length."""
+        if self.pricing_unit == "request":
+            return self.cost_microcents_per_unit
+        return self.cost_microcents_per_unit * max(seconds, 0)
 
     def to_dict(self) -> dict:
         return {
@@ -65,6 +74,7 @@ class MediaModel:
                 "image_to_video": self.image_to_video,
             },
             "cost_microcents_per_unit": self.cost_microcents_per_unit,
+            "pricing_unit": self.pricing_unit,
             "price_known": self.price_known,
         }
 

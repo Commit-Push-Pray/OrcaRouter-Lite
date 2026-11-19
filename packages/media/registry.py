@@ -81,6 +81,7 @@ def resolve_auto_video(req: VideoRequest) -> tuple[MediaProvider, MediaModel]:
           if m.kind == "video" and can_serve(m, req)]
     if not ok:
         raise MediaError("No configured video model satisfies this request", 422, "no_capable_model")
-    # Priced models first, cheapest first; models without a known price come last.
-    ok.sort(key=lambda pm: (not pm[1].price_known, pm[1].cost_microcents_per_unit))
+    # Priced models first, cheapest effective cost first; unpriced come last.
+    secs = req.seconds or 5
+    ok.sort(key=lambda pm: (not pm[1].price_known, pm[1].estimate_microcents(pm[1].seconds_for(secs))))
     return ok[0]

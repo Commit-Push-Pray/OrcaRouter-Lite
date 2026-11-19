@@ -51,7 +51,7 @@ def _check_allowlist(kc: KeyContext, requested: str) -> None:
 
 
 def estimate_video_microcents(model: MediaModel, req: VideoRequest) -> int:
-    return model.cost_microcents_per_unit * max(model.seconds_for(req.seconds), 0)
+    return model.estimate_microcents(model.seconds_for(req.seconds))
 
 
 def estimate_image_microcents(model: MediaModel, req: ImageRequest) -> int:
