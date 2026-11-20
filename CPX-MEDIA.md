@@ -101,6 +101,17 @@ Subclass `packages.media.provider.MediaProvider` (`models`, `generate_images`, `
 optional `cancel_video`) and register it in `packages/media/registry.py`. Real providers are planned in this
 order: hosted OrcaRouter (done, see above), Volcengine Ark (Seedance, Seedream), MiniMax, then fal and Replicate.
 
+## CPX-GenAI integration
+
+The generative lane script (`cpx-genai/scripts/generate_video_scenes.py`) calls the hosted OrcaRouter
+video API directly (same `POST /v1/video/generations`, `GET /v1/video/generations/{task_id}` endpoints)
+to produce AI-generated video clips for shots tagged as `generative` in a BRIEF.json.
+
+The capsule-cinema fork also has an OrcaRouter tool adapter
+(`lib/custom_tools/video_generation/orcarouter_video_generator_tool.py`) that wraps the same API as a
+capsule-cinema engine, so the full pipeline can dispatch generative shots through capsule-cinema's
+tool system.
+
 ## Not yet done
 
 End-to-end live API test (submit + poll + download); other providers (Volcengine Ark direct, MiniMax direct,
